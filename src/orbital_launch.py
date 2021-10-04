@@ -40,7 +40,7 @@ class Telemetry:
         self.client = krpc.connect()
 
         self.do_record = False
-        self.record = [['ut', 'altitude', 'drag', 'TAS', 'mach']]
+        self.record = [['ut', 'altitude', 'drag', 'TAS', 'mach', 'density']]
 
         self.sc = self.client.space_center
         self.kerbin = self.sc.bodies['Kerbin']
@@ -60,6 +60,7 @@ class Telemetry:
         self.altitude = 0
         self.apoapsis = 0
         self.start_time = 0
+        self.elapsed = 0
 
     def init_time(self):
         self.start_time = self.ut_stream()
@@ -71,12 +72,12 @@ class Telemetry:
 
         if self.do_record:
             # Only required for telemetry
-            ut = self.ut_stream() - self.start_time
+            self.elapsed = self.ut_stream() - self.start_time
             drag = magnitude(self.drag_stream())
             tas = self.tas_stream()
             mach = self.mach_stream()
             density = self.density_stream()
-            self.record.append([ut, self.altitude, drag, tas, mach, density])
+            self.record.append([self.elapsed, self.altitude, drag, tas, mach, density])
 
     def stop_recording(self):
         self.do_record = False
@@ -102,6 +103,7 @@ class OrbitalLaunch:
         self.telemetry.init_time()
         while True:
             start_time = time.time()
+            self.telemetry.control.speed_mode = self.telemetry.sc.SpeedMode.surface
             self.telemetry.update()
             altitude = self.telemetry.altitude
             apoapsis = self.telemetry.apoapsis
@@ -109,7 +111,7 @@ class OrbitalLaunch:
             if self._check_phase(altitude, apoapsis):
                 self._change_flight_law()
 
-            if self.telemetry.do_record and altitude > 40000:
+            if self.telemetry.do_record and altitude > 70000:
                 self.telemetry.stop_recording()
 
             end_time = time.time()
@@ -142,7 +144,7 @@ class OrbitalLaunch:
         if self.phase == FlightPhase.MAIN_STAGE_SEPARATION and self.meco_timer_2.elapsed():
             self.phase = FlightPhase.SUBORBITAL_ACCELERATION
             return True
-        if self.phase == FlightPhase.SUBORBITAL_ACCELERATION and apoapsis > 65000:
+        if self.phase == FlightPhase.SUBORBITAL_ACCELERATION and apoapsis > 80000:
             self.phase = FlightPhase.SECO
             return True
         return False
@@ -156,38 +158,38 @@ class OrbitalLaunch:
             control.rcs = False
 
         if self.phase == FlightPhase.INITIAL_CLIMB:
-            print('Launch!')
+            print(self.telemetry.elapsed, 'Launch!')
             autopilot.engage()
             autopilot.target_pitch_and_heading(90, 90)
             control.throttle = 1
             control.activate_next_stage()
 
         if self.phase == FlightPhase.INITIAL_TURN:
-            print('Initial turn!')
+            print(self.telemetry.elapsed, 'Initial turn!')
             autopilot.target_pitch_and_heading(87, 90)
 
         if self.phase == FlightPhase.GRAVITY_TURN:
-            print('Gravity turn!')
+            print(self.telemetry.elapsed, 'Gravity turn!')
             autopilot.disengage()
             control.sas = True
             time.sleep(0.1)
             control.sas_mode = self.telemetry.sc.SASMode.prograde
 
         if self.phase == FlightPhase.MECO:
-            print('MECO!')
+            print(self.telemetry.elapsed, 'MECO!')
             control.throttle = 0
 
         if self.phase == FlightPhase.MAIN_STAGE_SEPARATION:
-            print('Main stage separation!')
+            print(self.telemetry.elapsed, 'Main stage separation!')
             control.activate_next_stage()
 
         if self.phase == FlightPhase.SUBORBITAL_ACCELERATION:
-            print('Suborbital acceleration!')
+            print(self.telemetry.elapsed, 'Suborbital acceleration!')
             control.activate_next_stage()
             control.throttle = 1
 
         if self.phase == FlightPhase.SECO:
-            print('SECO!')
+            print(self.telemetry.elapsed, 'SECO!')
             control.throttle = 0
 
 
