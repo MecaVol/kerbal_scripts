@@ -20,7 +20,9 @@ class FlightPhase(Enum):
     SECOND_ENGINE_START = 7
     SUBORBITAL_ACCELERATION = 8
     SECO = 9
-    CIRCULARIZATION = 10
+    IN_SPACE_TOWARDS_CIRCULARIZATION = 10
+    CIRCULARIZATION = 11
+    ORBIT = 12
 
 
 class Timer:
@@ -35,12 +37,12 @@ class Timer:
 
 
 class Telemetry:
-
+    """Connects to kRPC to get KSP streams of values and interesting objects such as vessel, control, flight, etc."""
     def __init__(self):
         self.client = krpc.connect()
 
         self.do_record = False
-        self.record = [['ut', 'altitude', 'drag', 'TAS', 'mach', 'density']]
+        self.record = [['ut', 'altitude', 'drag', 'TAS', 'mach', 'density', 'Q', 'temperature']]
 
         self.sc = self.client.space_center
         self.kerbin = self.sc.bodies['Kerbin']
@@ -56,6 +58,8 @@ class Telemetry:
         self.tas_stream = self.client.add_stream(getattr, self.flight, 'true_air_speed')
         self.mach_stream = self.client.add_stream(getattr, self.flight, 'mach')
         self.density_stream = self.client.add_stream(getattr, self.flight, 'atmosphere_density')
+        self.dynamic_pressure_stream = self.client.add_stream(getattr, self.flight, 'dynamic_pressure')
+        self.temperature_stream = self.client.add_stream(getattr, self.flight, 'static_air_temperature')
 
         self.altitude = 0
         self.apoapsis = 0
@@ -77,15 +81,17 @@ class Telemetry:
             tas = self.tas_stream()
             mach = self.mach_stream()
             density = self.density_stream()
-            self.record.append([self.elapsed, self.altitude, drag, tas, mach, density])
+            q = self.dynamic_pressure_stream()
+            temperature = self.temperature_stream()
+            self.record.append([self.elapsed, self.altitude, drag, tas, mach, density, q, temperature])
 
     def stop_recording(self):
         self.do_record = False
-        self._write_record()
+        self._write_atmospheric_record()
 
-    def _write_record(self):
-        print('Writing telemetry report...', sep=' ')
-        with open('output.csv', 'w', newline='') as file:
+    def _write_atmospheric_record(self):
+        print('Writing atmospheric telemetry report...', sep=' ')
+        with open('atmospheric.csv', 'w', newline='') as file:
             writer = csv.writer(file)
             writer.writerows(self.record)
         print('Done!')
@@ -98,6 +104,10 @@ class OrbitalLaunch:
         self._change_flight_law()
         self.meco_timer_1 = None
         self.meco_timer_2 = None
+
+    @property
+    def phase_name(self):
+        return str(self.phase).removeprefix('FlightPhase.')
 
     def run(self):
         self.telemetry.init_time()
@@ -144,53 +154,57 @@ class OrbitalLaunch:
         if self.phase == FlightPhase.MAIN_STAGE_SEPARATION and self.meco_timer_2.elapsed():
             self.phase = FlightPhase.SUBORBITAL_ACCELERATION
             return True
-        if self.phase == FlightPhase.SUBORBITAL_ACCELERATION and apoapsis > 80000:
+        if self.phase == FlightPhase.SUBORBITAL_ACCELERATION and apoapsis > 75000:
             self.phase = FlightPhase.SECO
+            return True
+        if self.phase == FlightPhase.SECO and altitude > 70000:
+            self.phase = FlightPhase.IN_SPACE_TOWARDS_CIRCULARIZATION
             return True
         return False
 
     def _change_flight_law(self):
         control = self.telemetry.vessel.control
         autopilot = self.telemetry.autopilot
+        full_elapsed_text = str(self.telemetry.elapsed)
+        dot_index = full_elapsed_text.find('.')
+        elapsed_text = full_elapsed_text[0:dot_index+3]
+
+        print(elapsed_text, ' | ', self.phase_name)
 
         if self.phase == FlightPhase.LAUNCHPAD:
             control.sas = False
             control.rcs = False
 
         if self.phase == FlightPhase.INITIAL_CLIMB:
-            print(self.telemetry.elapsed, 'Launch!')
             autopilot.engage()
             autopilot.target_pitch_and_heading(90, 90)
             control.throttle = 1
             control.activate_next_stage()
 
         if self.phase == FlightPhase.INITIAL_TURN:
-            print(self.telemetry.elapsed, 'Initial turn!')
             autopilot.target_pitch_and_heading(87, 90)
 
         if self.phase == FlightPhase.GRAVITY_TURN:
-            print(self.telemetry.elapsed, 'Gravity turn!')
             autopilot.disengage()
             control.sas = True
             time.sleep(0.1)
             control.sas_mode = self.telemetry.sc.SASMode.prograde
 
         if self.phase == FlightPhase.MECO:
-            print(self.telemetry.elapsed, 'MECO!')
             control.throttle = 0
 
         if self.phase == FlightPhase.MAIN_STAGE_SEPARATION:
-            print(self.telemetry.elapsed, 'Main stage separation!')
             control.activate_next_stage()
 
         if self.phase == FlightPhase.SUBORBITAL_ACCELERATION:
-            print(self.telemetry.elapsed, 'Suborbital acceleration!')
             control.activate_next_stage()
             control.throttle = 1
 
         if self.phase == FlightPhase.SECO:
-            print(self.telemetry.elapsed, 'SECO!')
             control.throttle = 0
+
+        if self.phase == FlightPhase.IN_SPACE_TOWARDS_CIRCULARIZATION:
+            pass
 
 
 if __name__ == '__main__':
